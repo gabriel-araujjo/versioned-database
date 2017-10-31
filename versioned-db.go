@@ -1,4 +1,4 @@
-package versioned_database
+package version
 
 import (
 	"database/sql"
@@ -7,69 +7,83 @@ import (
 	"errors"
 )
 
-type VersioningDriver interface {
+type Strategy interface {
 	Version(db *sql.DB) (int, error)
 	SetVersion(db *sql.DB, version int) (error)
 }
 
-var (
-	versionDriversMu sync.RWMutex
-	versionDrivers   = make(map[string]VersioningDriver)
-)
-
-// Register makes a v versionDriver available for a versioned
-// database to use by the provided name
-// It panics if the passed versionDriver is nil or if a versionDriver already is
-// registered with the same name
-func Register(name string, driver VersioningDriver) {
-	versionDriversMu.Lock()
-	defer versionDriversMu.Unlock()
-
-	if driver == nil {
-		panic("versioned db: Register versionDriver is nil")
-	}
-	if _, dup := versionDrivers[name]; dup {
-		panic("versioned db: Register called twice for versionDriver " + name)
-	}
-	versionDrivers[name] = driver
-}
-
-type VersioningStrategy interface {
+type Scheme interface {
+	Version() int
+	VersionStrategy() string
 	OnCreate(db *sql.DB) error
 	OnUpdate(db *sql.DB, oldVersion int) error
 }
 
-func VersionedDatabase(versioningDriverName string, db *sql.DB, version int, strategy VersioningStrategy) error  {
+var (
+	versionDriversMu sync.RWMutex
+	versionDrivers   = make(map[string]Strategy)
+)
+
+// Register makes a scheme available for a versioned
+// scheme to use by the provided name
+// It panics if the passed scheme is nil or if a scheme already is
+// registered with the same name
+func Register(name string, strategy Strategy) {
+	versionDriversMu.Lock()
+	defer versionDriversMu.Unlock()
+
+	if strategy == nil {
+		panic("versioned db: Register strategy is nil")
+	}
+	if _, dup := versionDrivers[name]; dup {
+		panic("versioned db: Register called twice for strategy " + name)
+	}
+	versionDrivers[name] = strategy
+}
+
+func PersistScheme(db *sql.DB, scheme Scheme) error  {
+	var (
+		version  int
+		strategy Strategy
+	)
+
 	if db == nil {
 		return errors.New("versioned db: db is nil")
 	}
 
-	if version < 1 {
+	if scheme == nil {
+		return errors.New("versioned db: scheme is nil")
+	}
+
+	if version = scheme.Version(); version < 1 {
 		return errors.New("versioned db: version is less then one")
 	}
 
-	if strategy == nil {
-		return errors.New("versioned db: strategy is nil")
+	if strategy = strategyFromString(scheme.VersionStrategy()); strategy == nil {
+		return fmt.Errorf("versioned db: unknown v scheme %q (forgotten import?)", scheme.VersionStrategy())
 	}
 
-	versionDriversMu.RLock()
-	versionDriver, ok := versionDrivers[versioningDriverName]
-	versionDriversMu.RUnlock()
-	if !ok {
-		return fmt.Errorf("versioned db: unknown v driver %q (forgotten import?)", versioningDriverName)
-	}
-
-	return versionedDatabaseInternal(versionDriver, db, version, strategy)
+	return persistSchemeInternal(strategy, db, version, scheme)
 }
 
-func versionedDatabaseInternal(versionDriver VersioningDriver, db *sql.DB, version int, strategy VersioningStrategy) error  {
+func strategyFromString(name string) Strategy {
+	versionDriversMu.RLock()
+	versionDriver, ok := versionDrivers[name]
+	versionDriversMu.RUnlock()
+	if ok {
+		return versionDriver
+	}
+	return nil
+}
+
+func persistSchemeInternal(strategy Strategy, db *sql.DB, version int, scheme Scheme) error  {
 	var (
 		err error
 		dbVersion int
 		tx *sql.Tx
 	)
 
-	dbVersion, err = versionDriver.Version(db)
+	dbVersion, err = strategy.Version(db)
 
 	if err != nil {
 		return err
@@ -82,10 +96,10 @@ func versionedDatabaseInternal(versionDriver VersioningDriver, db *sql.DB, versi
 	}
 
 	if dbVersion == 0 {
-		err = strategy.OnCreate(db)
+		err = scheme.OnCreate(db)
 		goto finalize
 	} else if dbVersion < version {
-		err = strategy.OnUpdate(db, dbVersion)
+		err = scheme.OnUpdate(db, dbVersion)
 		goto finalize
 	}
 
@@ -98,7 +112,7 @@ finalize:
 		return err
 	}
 	tx.Commit()
-	return versionDriver.SetVersion(db, version)
+	return strategy.SetVersion(db, version)
 }
 
 

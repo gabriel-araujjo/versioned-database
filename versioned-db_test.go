@@ -1,4 +1,4 @@
-package versioned_database
+package version
 
 import "testing"
 import (
@@ -10,22 +10,22 @@ import (
 )
 
 var (
-	versionDriver *versioningMock
-	strategy *strategyMock
-	db *sql.DB
-	dbMock sqlmock.Sqlmock
+	strategy *versionStrategyMock
+	scheme   *schemeMock
+	db       *sql.DB
+	dbMock   sqlmock.Sqlmock
 )
 
 func setup(t *testing.T) {
-	versionDriver = new(versioningMock)
-	strategy = new(strategyMock)
+	strategy = new(versionStrategyMock)
+	scheme = new(schemeMock)
 	db, dbMock, _ = sqlmock.New()
 	assert.NotNil(t, db)
-	Register("fake", versionDriver)
+	Register("fake", strategy)
 }
 
 func tearsDown(*testing.T) {
-	versionDrivers = make(map[string]VersioningDriver)
+	versionDrivers = make(map[string]Strategy)
 	db.Close()
 }
 
@@ -34,7 +34,7 @@ func TestRegister(t *testing.T) {
 	defer tearsDown(t)
 
 	registeredDriver, _ := versionDrivers["fake"]
-	assert.Equal(t, versionDriver , registeredDriver, "Driver was not registered")
+	assert.Equal(t, strategy, registeredDriver, "Driver was not registered")
 }
 
 func TestRegisterDuplicated(t *testing.T) {
@@ -45,11 +45,11 @@ func TestRegisterDuplicated(t *testing.T) {
 			t.Error("Duplicate registering does not panic")
 		}
 	}()
-	mockDriver := new(versioningMock)
+	mockDriver := new(versionStrategyMock)
 	Register("fake", mockDriver)
 }
 
-func TestRegisterNilDriver(t *testing.T)  {
+func TestRegisterNilStrategy(t *testing.T)  {
 	setup(t)
 	defer tearsDown(t)
 	defer func() {
@@ -60,160 +60,182 @@ func TestRegisterNilDriver(t *testing.T)  {
 	Register("fake", nil)
 }
 
-func TestVersionedDatabaseCreation(t *testing.T) {
+func TestSchemeCreation(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 
 	dbVersion := 1
 
-	versionDriver.
+	strategy.
 		On("Version", db).Return(0, nil).
 		On("SetVersion", db, dbVersion).Return(nil)
 
 	dbMock.ExpectBegin()
-	strategy.
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake").
 		On("OnCreate", db).Return(nil)
 	dbMock.ExpectCommit()
 
-	err := VersionedDatabase("fake", db, dbVersion, strategy)
-	assert.Nil(t, err, "VersionedDatabase must not return error on create")
+	err := PersistScheme(db, scheme)
+	assert.Nil(t, err, "PersistScheme must not return error on create")
 
-	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseCreationError(t *testing.T) {
+func TestSchemeCreationError(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 
 	dbVersion := 1
 
-	versionDriver.
+	strategy.
 		On("Version", db).Return(0, nil)
 
 	dbMock.ExpectBegin()
-	strategy.
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake").
 		On("OnCreate", db).Return(errors.New(""))
 	dbMock.ExpectRollback()
 
-	err := VersionedDatabase("fake", db, dbVersion, strategy)
+	err := PersistScheme(db, scheme)
 	assert.NotNil(t, err, "Creation error not passed out")
 
-	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseUpdate(t *testing.T) {
+func TestSchemeUpdate(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 
 	dbVersion := 2
 
-	versionDriver.
+	strategy.
 		On("Version", db).Return(dbVersion - 1, nil).
 		On("SetVersion", db, dbVersion).Return(nil)
 
 	dbMock.ExpectBegin()
-	strategy.
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake").
 		On("OnUpdate", db, dbVersion - 1).Return(nil)
 	dbMock.ExpectRollback()
 
-	err := VersionedDatabase("fake", db, dbVersion, strategy)
-	assert.Nil(t, err, "VersionedDatabase must not return error on create")
+	err := PersistScheme(db, scheme)
+	assert.Nil(t, err, "PersistScheme must not return error on create")
 
-	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseUpdateError(t *testing.T) {
+func TestSchemeUpdateError(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 
 	dbVersion := 2
 
-	versionDriver.
+	strategy.
 		On("Version", db).Return(dbVersion - 1, nil)
 
 	dbMock.ExpectBegin()
-	strategy.
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake").
 		On("OnUpdate", db, dbVersion - 1).Return(errors.New(""))
 	dbMock.ExpectRollback()
 
-	err := VersionedDatabase("fake", db, dbVersion, strategy)
+	err := PersistScheme(db, scheme)
 	assert.NotNil(t, err, "Update error must be passed out")
 
-	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseUpToDate(t *testing.T) {
+func TestSchemeUpToDate(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 
 	dbVersion := 1
 
-	versionDriver.
-	On("Version", db).Return(dbVersion, nil)
+	strategy.
+		On("Version", db).Return(dbVersion, nil)
+
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake")
 
 	dbMock.ExpectBegin()
-	err := VersionedDatabase("fake", db, dbVersion, strategy)
+	err := PersistScheme(db, scheme)
 	assert.Nil(t, err, "Up to date database does not return error")
 
 	dbMock.ExpectRollback()
-	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseNilDb(t *testing.T) {
+func TestPersistSchemeOnNilDb(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
-	err := VersionedDatabase("fake", nil, 1, strategy)
+	err := PersistScheme(nil, scheme)
 	assert.NotNil(t, err, "An error must be returned when db is nil")
-	strategy.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseNilStrategy(t *testing.T) {
+func TestPersistNilScheme(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
-	err := VersionedDatabase("fake", db, 1, nil)
-	assert.NotNil(t, err, "An error must be returned when db is nil")
-	strategy.AssertExpectations(t)
+	err := PersistScheme(db, nil)
+	assert.NotNil(t, err, "An error must be returned when scheme is nil")
+	scheme.AssertExpectations(t)
 }
 
-func TestVersionedDatabaseNotRegisteredDriver(t *testing.T) {
+func TestPersistSchemeUsingUnregisteredStrategy(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
-	err := VersionedDatabase("not_registered", db, 1, strategy)
-	assert.NotNil(t, err, "An error must be returned when db is nil")
-	strategy.AssertExpectations(t)
+	scheme.
+		On("VersionStrategy").Return("not_registered").
+		On("Version").Return(1)
+	err := PersistScheme(db, scheme)
+	assert.NotNil(t, err, "An error must be returned when a scheme is not registered")
+	scheme.AssertExpectations(t)
 }
 
 /////////////////////////////////////////////////////
 // Stubs
 /////////////////////////////////////////////////////
 
-type versioningMock struct {
+type versionStrategyMock struct {
 	mock.Mock
 }
 
-func (m *versioningMock) Version(db *sql.DB) (int, error) {
+func (m *versionStrategyMock) Version(db *sql.DB) (int, error) {
 	args := m.Called(db)
 	return args.Int(0), args.Error(1)
 }
 
-func (m *versioningMock) SetVersion(db *sql.DB, version int) (error) {
+func (m *versionStrategyMock) SetVersion(db *sql.DB, version int) (error) {
 	args := m.Called(db, version)
 	return args.Error(0)
 }
 
-type strategyMock struct {
+type schemeMock struct {
 	mock.Mock
 }
 
-func (s *strategyMock) OnCreate(db *sql.DB) error  {
+func (s *schemeMock) Version() int  {
+	return s.Called().Int(0)
+}
+
+func (s *schemeMock) VersionStrategy() string  {
+	return s.Called().String(0)
+}
+
+func (s *schemeMock) OnCreate(db *sql.DB) error  {
 	return s.Called(db).Error(0)
 }
 
-func (s *strategyMock) OnUpdate(db *sql.DB, oldVersion int) error {
+func (s *schemeMock) OnUpdate(db *sql.DB, oldVersion int) error {
 	return s.Called(db, oldVersion).Error(0)
 }
