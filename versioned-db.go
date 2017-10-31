@@ -40,11 +40,14 @@ type VersioningStrategy interface {
 }
 
 func VersionedDatabase(versioningDriverName string, db *sql.DB, version int, strategy VersioningStrategy) error  {
-	var err error
-
 	if db == nil {
 		return errors.New("versioned db: db is nil")
 	}
+
+	if version < 1 {
+		return errors.New("versioned db: version is less then one")
+	}
+
 	if strategy == nil {
 		return errors.New("versioned db: strategy is nil")
 	}
@@ -56,23 +59,46 @@ func VersionedDatabase(versioningDriverName string, db *sql.DB, version int, str
 		return fmt.Errorf("versioned db: unknown v driver %q (forgotten import?)", versioningDriverName)
 	}
 
-	dbVersion, err := versionDriver.Version(db)
+	return versionedDatabaseInternal(versionDriver, db, version, strategy)
+}
 
-	if err == nil {
-		if dbVersion == 0 {
-			err = strategy.OnCreate(db)
-		} else if dbVersion < version {
-			err = strategy.OnUpdate(db, dbVersion)
-		} else {
-			return nil
-		}
+func versionedDatabaseInternal(versionDriver VersioningDriver, db *sql.DB, version int, strategy VersioningStrategy) error  {
+	var (
+		err error
+		dbVersion int
+		tx *sql.Tx
+	)
+
+	dbVersion, err = versionDriver.Version(db)
+
+	if err != nil {
+		return err
 	}
 
-	if err == nil {
-		return versionDriver.SetVersion(db, version)
+	tx, err = db.Begin()
+
+	if err != nil {
+		return err
 	}
 
-	return err
+	if dbVersion == 0 {
+		err = strategy.OnCreate(db)
+		goto finalize
+	} else if dbVersion < version {
+		err = strategy.OnUpdate(db, dbVersion)
+		goto finalize
+	}
+
+	tx.Rollback()
+	return nil
+
+finalize:
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	tx.Commit()
+	return versionDriver.SetVersion(db, version)
 }
 
 

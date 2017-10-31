@@ -13,12 +13,13 @@ var (
 	versionDriver *versioningMock
 	strategy *strategyMock
 	db *sql.DB
+	dbMock sqlmock.Sqlmock
 )
 
 func setup(t *testing.T) {
 	versionDriver = new(versioningMock)
 	strategy = new(strategyMock)
-	db, _, _ = sqlmock.New()
+	db, dbMock, _ = sqlmock.New()
 	assert.NotNil(t, db)
 	Register("fake", versionDriver)
 }
@@ -69,8 +70,10 @@ func TestVersionedDatabaseCreation(t *testing.T) {
 		On("Version", db).Return(0, nil).
 		On("SetVersion", db, dbVersion).Return(nil)
 
+	dbMock.ExpectBegin()
 	strategy.
 		On("OnCreate", db).Return(nil)
+	dbMock.ExpectCommit()
 
 	err := VersionedDatabase("fake", db, dbVersion, strategy)
 	assert.Nil(t, err, "VersionedDatabase must not return error on create")
@@ -88,8 +91,10 @@ func TestVersionedDatabaseCreationError(t *testing.T) {
 	versionDriver.
 		On("Version", db).Return(0, nil)
 
+	dbMock.ExpectBegin()
 	strategy.
 		On("OnCreate", db).Return(errors.New(""))
+	dbMock.ExpectRollback()
 
 	err := VersionedDatabase("fake", db, dbVersion, strategy)
 	assert.NotNil(t, err, "Creation error not passed out")
@@ -108,8 +113,10 @@ func TestVersionedDatabaseUpdate(t *testing.T) {
 		On("Version", db).Return(dbVersion - 1, nil).
 		On("SetVersion", db, dbVersion).Return(nil)
 
+	dbMock.ExpectBegin()
 	strategy.
 		On("OnUpdate", db, dbVersion - 1).Return(nil)
+	dbMock.ExpectRollback()
 
 	err := VersionedDatabase("fake", db, dbVersion, strategy)
 	assert.Nil(t, err, "VersionedDatabase must not return error on create")
@@ -127,8 +134,10 @@ func TestVersionedDatabaseUpdateError(t *testing.T) {
 	versionDriver.
 		On("Version", db).Return(dbVersion - 1, nil)
 
+	dbMock.ExpectBegin()
 	strategy.
 		On("OnUpdate", db, dbVersion - 1).Return(errors.New(""))
+	dbMock.ExpectRollback()
 
 	err := VersionedDatabase("fake", db, dbVersion, strategy)
 	assert.NotNil(t, err, "Update error must be passed out")
@@ -146,9 +155,11 @@ func TestVersionedDatabaseUpToDate(t *testing.T) {
 	versionDriver.
 	On("Version", db).Return(dbVersion, nil)
 
+	dbMock.ExpectBegin()
 	err := VersionedDatabase("fake", db, dbVersion, strategy)
 	assert.Nil(t, err, "Up to date database does not return error")
 
+	dbMock.ExpectRollback()
 	versionDriver.AssertExpectations(t)
 	strategy.AssertExpectations(t)
 }
