@@ -2,14 +2,14 @@ package version
 
 import (
 	"database/sql"
-	"sync"
-	"fmt"
 	"errors"
+	"fmt"
+	"sync"
 )
 
 type Strategy interface {
 	Version(db *sql.DB) (int, error)
-	SetVersion(db *sql.DB, version int) (error)
+	SetVersion(db *sql.DB, version int) error
 }
 
 type Scheme interface {
@@ -41,7 +41,7 @@ func Register(name string, strategy Strategy) {
 	versionDrivers[name] = strategy
 }
 
-func PersistScheme(db *sql.DB, scheme Scheme) error  {
+func PersistScheme(db *sql.DB, scheme Scheme) error {
 	var (
 		version  int
 		strategy Strategy
@@ -76,11 +76,11 @@ func strategyFromString(name string) Strategy {
 	return nil
 }
 
-func persistSchemeInternal(strategy Strategy, db *sql.DB, version int, scheme Scheme) error  {
+func persistSchemeInternal(strategy Strategy, db *sql.DB, version int, scheme Scheme) error {
 	var (
-		err error
+		err       error
 		dbVersion int
-		tx *sql.Tx
+		tx        *sql.Tx
 	)
 
 	dbVersion, err = strategy.Version(db)
@@ -111,10 +111,10 @@ finalize:
 		tx.Rollback()
 		return err
 	}
-	tx.Commit()
-	return strategy.SetVersion(db, version)
+	err = strategy.SetVersion(db, version)
+	if err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
 }
-
-
-
-

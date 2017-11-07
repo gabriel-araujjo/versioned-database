@@ -2,11 +2,11 @@ package version
 
 import "testing"
 import (
-	"github.com/stretchr/testify/mock"
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"gopkg.in/DATA-DOG/go-sqlmock.v1"
 	"errors"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"gopkg.in/DATA-DOG/go-sqlmock.v1"
 )
 
 var (
@@ -41,7 +41,7 @@ func TestRegisterDuplicated(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 	defer func() {
-		if r:= recover(); r == nil {
+		if r := recover(); r == nil {
 			t.Error("Duplicate registering does not panic")
 		}
 	}()
@@ -49,11 +49,11 @@ func TestRegisterDuplicated(t *testing.T) {
 	Register("fake", mockDriver)
 }
 
-func TestRegisterNilStrategy(t *testing.T)  {
+func TestRegisterNilStrategy(t *testing.T) {
 	setup(t)
 	defer tearsDown(t)
 	defer func() {
-		if r:= recover(); r == nil {
+		if r := recover(); r == nil {
 			t.Error("Registering nil does not panic")
 		}
 	}()
@@ -114,15 +114,15 @@ func TestSchemeUpdate(t *testing.T) {
 	dbVersion := 2
 
 	strategy.
-		On("Version", db).Return(dbVersion - 1, nil).
+		On("Version", db).Return(dbVersion-1, nil).
 		On("SetVersion", db, dbVersion).Return(nil)
 
 	dbMock.ExpectBegin()
 	scheme.
 		On("Version").Return(dbVersion).
 		On("VersionStrategy").Return("fake").
-		On("OnUpdate", db, dbVersion - 1).Return(nil)
-	dbMock.ExpectRollback()
+		On("OnUpdate", db, dbVersion-1).Return(nil)
+	dbMock.ExpectCommit()
 
 	err := PersistScheme(db, scheme)
 	assert.Nil(t, err, "PersistScheme must not return error on create")
@@ -138,13 +138,13 @@ func TestSchemeUpdateError(t *testing.T) {
 	dbVersion := 2
 
 	strategy.
-		On("Version", db).Return(dbVersion - 1, nil)
+		On("Version", db).Return(dbVersion-1, nil)
 
 	dbMock.ExpectBegin()
 	scheme.
 		On("Version").Return(dbVersion).
 		On("VersionStrategy").Return("fake").
-		On("OnUpdate", db, dbVersion - 1).Return(errors.New(""))
+		On("OnUpdate", db, dbVersion-1).Return(errors.New(""))
 	dbMock.ExpectRollback()
 
 	err := PersistScheme(db, scheme)
@@ -215,7 +215,7 @@ func (m *versionStrategyMock) Version(db *sql.DB) (int, error) {
 	return args.Int(0), args.Error(1)
 }
 
-func (m *versionStrategyMock) SetVersion(db *sql.DB, version int) (error) {
+func (m *versionStrategyMock) SetVersion(db *sql.DB, version int) error {
 	args := m.Called(db, version)
 	return args.Error(0)
 }
@@ -224,15 +224,15 @@ type schemeMock struct {
 	mock.Mock
 }
 
-func (s *schemeMock) Version() int  {
+func (s *schemeMock) Version() int {
 	return s.Called().Int(0)
 }
 
-func (s *schemeMock) VersionStrategy() string  {
+func (s *schemeMock) VersionStrategy() string {
 	return s.Called().String(0)
 }
 
-func (s *schemeMock) OnCreate(db *sql.DB) error  {
+func (s *schemeMock) OnCreate(db *sql.DB) error {
 	return s.Called(db).Error(0)
 }
 
