@@ -16,6 +16,8 @@ var (
 	dbMock   sqlmock.Sqlmock
 )
 
+var someError error = errors.New("SomeError")
+
 func setup(t *testing.T) {
 	strategy = new(versionStrategyMock)
 	scheme = new(schemeMock)
@@ -82,6 +84,10 @@ func TestSchemeCreation(t *testing.T) {
 
 	strategy.AssertExpectations(t)
 	scheme.AssertExpectations(t)
+	err = dbMock.ExpectationsWereMet()
+	if err != nil {
+		t.Errorf("Expectations not met. Err %q", err)
+	}
 }
 
 func TestSchemeCreationError(t *testing.T) {
@@ -97,7 +103,7 @@ func TestSchemeCreationError(t *testing.T) {
 	scheme.
 		On("Version").Return(dbVersion).
 		On("VersionStrategy").Return("fake").
-		On("OnCreate", db).Return(errors.New(""))
+		On("OnCreate", db).Return(someError)
 	dbMock.ExpectRollback()
 
 	err := PersistScheme(db, scheme)
@@ -105,6 +111,38 @@ func TestSchemeCreationError(t *testing.T) {
 
 	strategy.AssertExpectations(t)
 	scheme.AssertExpectations(t)
+	err = dbMock.ExpectationsWereMet()
+	if err != nil {
+		t.Errorf("Expectations not met. Err %q", err)
+	}
+}
+
+func TestVersionError(t *testing.T) {
+	setup(t)
+	defer tearsDown(t)
+
+	dbVersion := 1
+
+	strategy.
+		On("Version", db).Return(0, nil).
+		On("SetVersion", db, dbVersion).Return(someError)
+
+	dbMock.ExpectBegin()
+	scheme.
+		On("Version").Return(dbVersion).
+		On("VersionStrategy").Return("fake").
+		On("OnCreate", db).Return(nil)
+	dbMock.ExpectRollback()
+
+	err := PersistScheme(db, scheme)
+	assert.NotNil(t, err, "Version error not passed out")
+
+	strategy.AssertExpectations(t)
+	scheme.AssertExpectations(t)
+	err = dbMock.ExpectationsWereMet()
+	if err != nil {
+		t.Errorf("Expectations not met. Err %q", err)
+	}
 }
 
 func TestSchemeUpdate(t *testing.T) {
@@ -144,7 +182,7 @@ func TestSchemeUpdateError(t *testing.T) {
 	scheme.
 		On("Version").Return(dbVersion).
 		On("VersionStrategy").Return("fake").
-		On("OnUpdate", db, dbVersion-1).Return(errors.New(""))
+		On("OnUpdate", db, dbVersion-1).Return(someError)
 	dbMock.ExpectRollback()
 
 	err := PersistScheme(db, scheme)
@@ -189,6 +227,14 @@ func TestPersistNilScheme(t *testing.T) {
 	err := PersistScheme(db, nil)
 	assert.NotNil(t, err, "An error must be returned when scheme is nil")
 	scheme.AssertExpectations(t)
+}
+
+func TestNegativeVersion(t *testing.T) {
+	setup(t)
+	defer tearsDown(t)
+	scheme.On("Version").Return(-1)
+	err := PersistScheme(db, scheme)
+	assert.NotNil(t, err, "It must return err if a negative version is provided")
 }
 
 func TestPersistSchemeUsingUnregisteredStrategy(t *testing.T) {

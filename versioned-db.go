@@ -77,44 +77,41 @@ func strategyFromString(name string) Strategy {
 }
 
 func persistSchemeInternal(strategy Strategy, db *sql.DB, version int, scheme Scheme) error {
-	var (
-		err       error
-		dbVersion int
-		tx        *sql.Tx
-	)
+	var createOrUpdate func(*sql.DB) error
 
-	dbVersion, err = strategy.Version(db)
-
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 
-	tx, err = db.Begin()
-
+	dbVersion, err := strategy.Version(db)
 	if err != nil {
-		return err
+		goto rollback
 	}
 
 	if dbVersion == 0 {
-		err = scheme.OnCreate(db)
+		createOrUpdate = scheme.OnCreate
 		goto finalize
 	} else if dbVersion < version {
-		err = scheme.OnUpdate(db, dbVersion)
+		createOrUpdate = func(db *sql.DB) error { return scheme.OnUpdate(db, dbVersion) }
 		goto finalize
 	}
 
-	tx.Rollback()
-	return nil
+	goto rollback
 
 finalize:
+	err = createOrUpdate(db)
 	if err != nil {
-		tx.Rollback()
-		return err
+		goto rollback
 	}
 	err = strategy.SetVersion(db, version)
 	if err != nil {
-		tx.Rollback()
-		return err
+		goto rollback
 	}
 	return tx.Commit()
+
+rollback:
+	tx.Rollback()
+	return err
+
 }
